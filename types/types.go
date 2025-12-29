@@ -118,6 +118,9 @@ func NewHTTPError(code int, e error) *HTTPError {
 }
 
 func (e *HTTPError) Error() string {
+	if e == nil || e.Err == nil {
+		return ""
+	}
 	return e.Err.Error()
 }
 

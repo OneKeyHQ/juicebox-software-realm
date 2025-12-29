@@ -105,7 +105,10 @@ func (m *mongoPubSub) Publish(ctx context.Context, _ types.RealmID, tenant strin
 		Created: time.Now(),
 	}
 	_, err = collection.InsertOne(ctx, me)
-	return types.NewHTTPError(http.StatusInternalServerError, err)
+	if err != nil {
+		return types.NewHTTPError(http.StatusInternalServerError, err)
+	}
+	return nil
 }
 
 func (m *mongoPubSub) Pull(ctx context.Context, _ types.RealmID, tenant string, max uint16) ([]responses.TenantLogEntry, error) {
