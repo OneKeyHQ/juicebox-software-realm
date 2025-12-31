@@ -9,6 +9,7 @@ import (
 	"github.com/fxamacker/cbor/v2"
 	"github.com/juicebox-systems/juicebox-software-realm/otel"
 	"github.com/juicebox-systems/juicebox-software-realm/types"
+	"github.com/juicebox-systems/juicebox-software-realm/volcenginekms"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -20,11 +21,15 @@ import (
 type MongoRecordStore struct {
 	client       *mongo.Client
 	databaseName string
+	kmsClient    *volcenginekms.Client
 }
 
 const userRecordsCollection string = "userRecords"
 const serializedUserRecordKey string = "serializedUserRecord"
 const versionKey string = "version"
+const encryptedDataKeyKey string = "encryptedDataKey"
+const encryptionNonceKey string = "encryptionNonce"
+const encryptionVersionKey string = "encryptionVersion"
 
 func NewMongoRecordStore(ctx context.Context, realmID types.RealmID) (*MongoRecordStore, error) {
 	ctx, span := otel.StartSpan(
@@ -68,9 +73,15 @@ func NewMongoRecordStore(ctx context.Context, realmID types.RealmID) (*MongoReco
 		}
 	}
 
+	kmsClient, err := volcenginekms.NewClient(ctx, realmID)
+	if err != nil {
+		return nil, otel.RecordOutcome(err, span)
+	}
+
 	return &MongoRecordStore{
 		client:       client,
 		databaseName: databaseName,
+		kmsClient:    kmsClient,
 	}, nil
 }
 
@@ -114,6 +125,17 @@ func (m MongoRecordStore) GetRecord(ctx context.Context, recordID UserRecordID) 
 	}
 
 	serializedUserRecord := primitiveBinaryRecord.Data
+	envelope, err := readEnvelope(result, serializedUserRecord)
+	if err != nil {
+		return userRecord, result, otel.RecordOutcome(err, span)
+	}
+
+	if envelope != nil {
+		serializedUserRecord, err = m.kmsClient.Decrypt(ctx, envelope)
+		if err != nil {
+			return userRecord, result, otel.RecordOutcome(err, span)
+		}
+	}
 
 	err = cbor.Unmarshal(serializedUserRecord, &userRecord)
 	if err != nil {
@@ -136,6 +158,11 @@ func (m MongoRecordStore) WriteRecord(ctx context.Context, recordID UserRecordID
 	collection := database.Collection(userRecordsCollection)
 
 	serializedUserRecord, err := cbor.Marshal(record)
+	if err != nil {
+		return otel.RecordOutcome(err, span)
+	}
+
+	envelope, err := m.kmsClient.Encrypt(ctx, serializedUserRecord)
 	if err != nil {
 		return otel.RecordOutcome(err, span)
 	}
@@ -181,7 +208,10 @@ func (m MongoRecordStore) WriteRecord(ctx context.Context, recordID UserRecordID
 		bson.M{
 			"$set": bson.M{
 				"_id":                   recordID,
-				serializedUserRecordKey: serializedUserRecord,
+				serializedUserRecordKey: envelope.Ciphertext,
+				encryptedDataKeyKey:     envelope.EncryptedDataKey,
+				encryptionNonceKey:      envelope.Nonce,
+				encryptionVersionKey:    envelope.Version,
 				versionKey:              newVersion,
 			},
 		},
@@ -193,4 +223,50 @@ func (m MongoRecordStore) WriteRecord(ctx context.Context, recordID UserRecordID
 		return otel.RecordOutcome(err, span)
 	}
 	return nil
+}
+
+func readEnvelope(result bson.M, ciphertext []byte) (*volcenginekms.Envelope, error) {
+	encryptedKeyValue, hasEncryptedKey := result[encryptedDataKeyKey]
+	nonceValue, hasNonce := result[encryptionNonceKey]
+	versionValue, hasVersion := result[encryptionVersionKey]
+	if !hasEncryptedKey && !hasNonce && !hasVersion {
+		return nil, nil
+	}
+
+	encryptedKey, ok := encryptedKeyValue.(string)
+	if !ok || encryptedKey == "" {
+		return nil, errors.New("encrypted data key was missing or invalid")
+	}
+
+	nonceBinary, ok := nonceValue.(primitive.Binary)
+	if !ok || len(nonceBinary.Data) == 0 {
+		return nil, errors.New("encryption nonce was missing or invalid")
+	}
+
+	version, err := parseEncryptionVersion(versionValue)
+	if err != nil {
+		return nil, err
+	}
+
+	return &volcenginekms.Envelope{
+		Ciphertext:       ciphertext,
+		EncryptedDataKey: encryptedKey,
+		Nonce:            nonceBinary.Data,
+		Version:          version,
+	}, nil
+}
+
+func parseEncryptionVersion(versionValue interface{}) (int, error) {
+	switch v := versionValue.(type) {
+	case int32:
+		return int(v), nil
+	case int64:
+		return int(v), nil
+	case int:
+		return v, nil
+	case nil:
+		return 0, errors.New("encryption version missing")
+	default:
+		return 0, errors.New("encryption version was of wrong type")
+	}
 }

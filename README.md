@@ -27,12 +27,16 @@ Usage of jb-sw-realm:
 
     	    Note: AWS uses DynamoDB and assumes you have a table created with a name
     	          matching your realm id and a partitionKey named recordID.
-    	mongo:
-    	    MONGO_URL = The url to acess your MongoDB instance in the form of:
-    	                mongodb://username:password@host:port/database
+	mongo:
+	    MONGO_URL = The url to acess your MongoDB instance in the form of:
+	                mongodb://username:password@host:port/database
+	    VOLCENGINE_REGION = The Volcengine region for KMS (for example, "cn-beijing")
+	    VOLCENGINE_KMS_KEY_ID = The Volcengine KMS key ID used to encrypt Mongo data
+	    VOLCSTACK_ACCESS_KEY_ID / VOLCSTACK_SECRET_ACCESS_KEY (and optional VOLCSTACK_SESSION_TOKEN)
+	      are used by the Volcengine SDK for KMS auth.
 
 
-    	    Note: User records are stored in a collection named "userRecords".
+	    Note: User records are stored in a collection named "userRecords".
     	    Tenant signing keys are stored in a collection named "tenantSecrets".
     	memory:
     	    TENANT_SECRETS = The versioned tenant secrets, in JSON format.
@@ -181,6 +185,9 @@ The available configuration variables, beyond the args on the `jb-sw-realm` bina
 * **GCP_PROJECT_ID**: The id of your project in GCP. This is only read when using the `GCP` provider.
 * **AWS_REGION_NAME**: The name of your region in AWS. This is only read when using the `AWS` provider.
 * **MONGO_URL**: The fully qualified URL to your mongo database, such as `mongodb://username:password@host:port/database`. This is only read when using the `Mongo` provider.
+* **VOLCENGINE_REGION**: The Volcengine region for KMS, such as `cn-beijing`. This is only read when using the `Mongo` provider.
+* **VOLCENGINE_KMS_KEY_ID**: The Volcengine KMS key ID used to encrypt Mongo data. This is only read when using the `Mongo` provider.
+* **VOLCSTACK_ACCESS_KEY_ID** / **VOLCSTACK_SECRET_ACCESS_KEY**: Volcengine credentials used by the KMS SDK when using the `Mongo` provider. `VOLCSTACK_SESSION_TOKEN` is optional.
 * **TENANT_SECRETS**: A list of versioned tenant secrets in the form of `'{"test":{"1":"an-auth-token-key"}}'`. This is only used if the `memory` provider is specified.
 * **OPENTELEMETRY_ENDPOINT**: The URL to an OpenTelemetry gRPC service where tracing data should be sent.
 
