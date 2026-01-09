@@ -18,6 +18,7 @@ require (
 	github.com/labstack/echo-jwt/v4 v4.2.0
 	github.com/labstack/echo/v4 v4.11.1
 	github.com/stretchr/testify v1.8.4
+	github.com/volcengine/volcengine-go-sdk v1.2.1
 	go.mongodb.org/mongo-driver v1.12.1
 	go.opentelemetry.io/contrib/instrumentation/github.com/labstack/echo/otelecho v0.42.0
 	go.opentelemetry.io/otel v1.16.0
@@ -29,7 +30,7 @@ require (
 	go.opentelemetry.io/otel/sdk/metric v0.39.0
 	go.opentelemetry.io/otel/trace v1.16.0
 	golang.org/x/crypto v0.21.0
-	google.golang.org/grpc v1.57.0
+	google.golang.org/grpc v1.57.1
 )
 
 require (
@@ -83,7 +84,6 @@ require (
 	github.com/valyala/bytebufferpool v1.0.0 // indirect
 	github.com/valyala/fasttemplate v1.2.2 // indirect
 	github.com/volcengine/volc-sdk-golang v1.0.23 // indirect
-	github.com/volcengine/volcengine-go-sdk v1.2.1 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
 	github.com/xdg-go/pbkdf2 v1.0.0 // indirect
 	github.com/xdg-go/scram v1.1.2 // indirect
