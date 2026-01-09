@@ -18,6 +18,7 @@ require (
 	github.com/labstack/echo-jwt/v4 v4.2.0
 	github.com/labstack/echo/v4 v4.11.1
 	github.com/stretchr/testify v1.8.4
+	github.com/volcengine/volcengine-go-sdk v1.2.1
 	go.mongodb.org/mongo-driver v1.12.1
 	go.opentelemetry.io/contrib/instrumentation/github.com/labstack/echo/otelecho v0.42.0
 	go.opentelemetry.io/otel v1.16.0
@@ -61,11 +62,11 @@ require (
 	github.com/go-logr/logr v1.2.4 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/golang-jwt/jwt v3.2.2+incompatible // indirect
-	github.com/golang/glog v1.1.2 // indirect
+	github.com/golang/glog v1.2.4 // indirect
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect
 	github.com/golang/protobuf v1.5.3 // indirect
 	github.com/golang/snappy v0.0.4 // indirect
-	github.com/google/go-cmp v0.5.9 // indirect
+	github.com/google/go-cmp v0.6.0 // indirect
 	github.com/google/s2a-go v0.1.5 // indirect
 	github.com/google/uuid v1.3.0 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.2.5 // indirect
@@ -83,7 +84,6 @@ require (
 	github.com/valyala/bytebufferpool v1.0.0 // indirect
 	github.com/valyala/fasttemplate v1.2.2 // indirect
 	github.com/volcengine/volc-sdk-golang v1.0.23 // indirect
-	github.com/volcengine/volcengine-go-sdk v1.2.1 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
 	github.com/xdg-go/pbkdf2 v1.0.0 // indirect
 	github.com/xdg-go/scram v1.1.2 // indirect
