@@ -8,8 +8,6 @@ import (
 	"github.com/juicebox-systems/juicebox-software-realm/records"
 )
 
-const pinAttemptLockoutCount = 7
-
 var pinAttemptDelays = pinAttemptDelaysFromEnv()
 
 func pinAttemptDelaysFromEnv() []time.Duration {
@@ -34,10 +32,9 @@ func pinAttemptDelaysFromEnv() []time.Duration {
 	}
 }
 
-func updatePinAttempt(attempt records.PinAttempt, now time.Time) records.PinAttempt {
-	attempt.TryCount++
-	delay, locked := pinAttemptDelay(attempt.TryCount)
-	if locked {
+func updatePinAttempt(attempt records.PinAttempt, guessCount uint16, now time.Time) records.PinAttempt {
+	delay := pinAttemptDelay(guessCount)
+	if delay == 0 {
 		attempt.RetryAt = time.Time{}
 	} else {
 		attempt.RetryAt = now.Add(delay)
@@ -45,8 +42,8 @@ func updatePinAttempt(attempt records.PinAttempt, now time.Time) records.PinAtte
 	return attempt
 }
 
-func shouldRateLimitAttempt(attempt records.PinAttempt, now time.Time) bool {
-	if attempt.TryCount >= pinAttemptLockoutCount {
+func shouldRateLimitAttempt(attempt records.PinAttempt, guessCount, numGuess uint16, now time.Time) bool {
+	if numGuess > 0 && guessCount >= numGuess {
 		return true
 	}
 	if !attempt.RetryAt.IsZero() && now.Before(attempt.RetryAt) {
@@ -55,15 +52,14 @@ func shouldRateLimitAttempt(attempt records.PinAttempt, now time.Time) bool {
 	return false
 }
 
-func pinAttemptDelay(tryCount int) (time.Duration, bool) {
-	if tryCount >= pinAttemptLockoutCount {
-		return 0, true
+func pinAttemptDelay(guessCount uint16) time.Duration {
+	if guessCount <= 1 {
+		return 0
 	}
-	if tryCount <= 0 {
-		return 0, false
+
+	index := int(guessCount) - 1
+	if index >= len(pinAttemptDelays) {
+		index = len(pinAttemptDelays) - 1
 	}
-	if tryCount > len(pinAttemptDelays) {
-		return pinAttemptDelays[len(pinAttemptDelays)-1], false
-	}
-	return pinAttemptDelays[tryCount-1], false
+	return pinAttemptDelays[index]
 }

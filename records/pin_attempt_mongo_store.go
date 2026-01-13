@@ -24,9 +24,8 @@ type MongoPinAttemptStore struct {
 }
 
 type mongoPinAttempt struct {
-	ID       string    `bson:"_id"`
-	TryCount int       `bson:"try_count"`
-	RetryAt  time.Time `bson:"retry_at"`
+	ID      string    `bson:"_id"`
+	RetryAt time.Time `bson:"retry_at"`
 }
 
 func NewMongoPinAttemptStore(ctx context.Context, realmID types.RealmID) (*MongoPinAttemptStore, error) {
@@ -102,8 +101,7 @@ func (m MongoPinAttemptStore) Get(ctx context.Context, userID string) (PinAttemp
 	}
 
 	return PinAttempt{
-		TryCount: result.TryCount,
-		RetryAt:  result.RetryAt,
+		RetryAt: result.RetryAt,
 	}, nil
 }
 
@@ -124,9 +122,8 @@ func (m MongoPinAttemptStore) Upsert(ctx context.Context, userID string, attempt
 		bson.M{"_id": userID},
 		bson.M{
 			"$set": bson.M{
-				"_id":       userID,
-				"try_count": attempt.TryCount,
-				"retry_at":  attempt.RetryAt,
+				"_id":      userID,
+				"retry_at": attempt.RetryAt,
 			},
 		},
 		options.Update().SetUpsert(true),

@@ -92,21 +92,32 @@ func RunRouter(
 			return contextAwareError(c, http.StatusBadRequest, "Error unmarshalling request body")
 		}
 
+		userRecord, readRecord, err := provider.RecordStore.GetRecord(c.Request().Context(), *userRecordID)
+		if err != nil {
+			return contextAwareError(c, http.StatusInternalServerError, "Error reading from record store")
+		}
+
 		if provider.PinAttemptStore != nil {
 			if _, ok := request.Payload.(requests.Recover2); ok {
+				guessCount := uint16(0)
+				numGuess := uint16(0)
+				locked := false
+				switch state := userRecord.RegistrationState.(type) {
+				case records.Registered:
+					guessCount = state.GuessCount
+					numGuess = state.Policy.NumGuesses
+				case records.NoGuesses:
+					locked = true
+				}
+
 				attempt, err := provider.PinAttemptStore.Get(c.Request().Context(), claims.Subject)
 				if err != nil {
 					return contextAwareError(c, http.StatusInternalServerError, "Error reading pin attempt record")
 				}
-				if shouldRateLimitAttempt(attempt, time.Now()) {
+				if locked || shouldRateLimitAttempt(attempt, guessCount, numGuess, time.Now()) {
 					return c.NoContent(http.StatusTooManyRequests)
 				}
 			}
-		}
-
-		userRecord, readRecord, err := provider.RecordStore.GetRecord(c.Request().Context(), *userRecordID)
-		if err != nil {
-			return contextAwareError(c, http.StatusInternalServerError, "Error reading from record store")
 		}
 
 		result, err := handleRequest(c, claims, userRecord, request, cryptoRand.Reader)
@@ -119,14 +130,17 @@ func RunRouter(
 			switch request.Payload.(type) {
 			case requests.Recover2:
 				if result.response.Status == responses.Ok {
-					attempt, err := provider.PinAttemptStore.Get(c.Request().Context(), claims.Subject)
-					if err != nil {
-						return contextAwareError(c, http.StatusInternalServerError, "Error reading pin attempt record")
-					}
+					state, ok := result.updatedRecord.RegistrationState.(records.Registered)
+					if ok {
+						attempt, err := provider.PinAttemptStore.Get(c.Request().Context(), claims.Subject)
+						if err != nil {
+							return contextAwareError(c, http.StatusInternalServerError, "Error reading pin attempt record")
+						}
 
-					attempt = updatePinAttempt(attempt, now)
-					if err := provider.PinAttemptStore.Upsert(c.Request().Context(), claims.Subject, attempt); err != nil {
-						return contextAwareError(c, http.StatusInternalServerError, "Error updating pin attempt record")
+						attempt = updatePinAttempt(attempt, state.GuessCount, now)
+						if err := provider.PinAttemptStore.Upsert(c.Request().Context(), claims.Subject, attempt); err != nil {
+							return contextAwareError(c, http.StatusInternalServerError, "Error updating pin attempt record")
+						}
 					}
 				}
 			case requests.Recover3:
@@ -186,9 +200,16 @@ func RunRouter(
 
 		numGuess := uint16(0)
 		guessCount := 0
-		if state, ok := userRecord.RegistrationState.(records.Registered); ok {
+		locked := false
+		switch state := userRecord.RegistrationState.(type) {
+		case records.Registered:
 			numGuess = state.Policy.NumGuesses
 			guessCount = int(state.GuessCount)
+			if numGuess > 0 && state.GuessCount >= numGuess {
+				locked = true
+			}
+		case records.NoGuesses:
+			locked = true
 		}
 
 		retryAfter := int64(0)
@@ -197,13 +218,15 @@ func RunRouter(
 			if err != nil {
 				return contextAwareError(c, http.StatusInternalServerError, "Error reading pin attempt record")
 			}
-			if attempt.TryCount >= pinAttemptLockoutCount {
-				retryAfter = -1
-			} else if !attempt.RetryAt.IsZero() {
-				if now := time.Now(); now.Before(attempt.RetryAt) {
-					retryAfter = int64(attempt.RetryAt.Sub(now).Seconds())
-					if retryAfter < 0 {
-						retryAfter = 0
+			if !attempt.RetryAt.IsZero() || locked {
+				if locked {
+					retryAfter = -1
+				} else if !attempt.RetryAt.IsZero() {
+					if now := time.Now(); now.Before(attempt.RetryAt) {
+						retryAfter = int64(attempt.RetryAt.Sub(now).Seconds())
+						if retryAfter < 0 {
+							retryAfter = 0
+						}
 					}
 				}
 			}

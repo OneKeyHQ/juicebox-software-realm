@@ -9,8 +9,7 @@ import (
 )
 
 type PinAttempt struct {
-	TryCount int       `bson:"try_count"`
-	RetryAt  time.Time `bson:"retry_at"`
+	RetryAt time.Time `bson:"retry_at"`
 }
 
 type PinAttemptStore interface {
