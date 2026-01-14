@@ -14,11 +14,11 @@ func pinAttemptDelaysFromEnv() []time.Duration {
 	if strings.EqualFold(os.Getenv("PIN_ATTEMPT_DELAY_MODE"), "test") {
 		return []time.Duration{
 			0,
-			time.Minute,
-			2 * time.Minute,
-			3 * time.Minute,
-			4 * time.Minute,
-			5 * time.Minute,
+			30 * time.Second,
+			60 * time.Second,
+			90 * time.Second,
+			120 * time.Second,
+			150 * time.Second,
 		}
 	}
 
