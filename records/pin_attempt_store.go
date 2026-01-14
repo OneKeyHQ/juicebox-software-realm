@@ -2,6 +2,8 @@ package records
 
 import (
 	"context"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/juicebox-systems/juicebox-software-realm/otel"
@@ -21,6 +23,10 @@ type PinAttemptStore interface {
 func NewPinAttemptStore(ctx context.Context, provider types.ProviderName, _ types.ProviderOptions, realmID types.RealmID) (PinAttemptStore, error) {
 	ctx, span := otel.StartSpan(ctx, "NewPinAttemptStore")
 	defer span.End()
+
+	if strings.EqualFold(os.Getenv("PIN_ATTEMPT_DISABLED"), "true") {
+		return nil, nil
+	}
 
 	switch provider {
 	case types.Mongo:
