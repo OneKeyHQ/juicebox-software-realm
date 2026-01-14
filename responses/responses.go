@@ -32,6 +32,12 @@ type Recover3 struct {
 
 type Delete struct{}
 
+type Limit struct {
+	NumGuess   uint16 `json:"num_guess"`
+	GuessCount int    `json:"guess_count"`
+	RetryAfter int64  `json:"retry_after"`
+}
+
 type TenantLog struct {
 	Events []TenantLogEntry `json:"events"`
 }

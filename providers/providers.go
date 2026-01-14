@@ -19,10 +19,11 @@ import (
 // Provider represents a generic interface into the
 // record and secrets storage of your choice
 type Provider struct {
-	Name           types.ProviderName
-	RecordStore    records.RecordStore
-	SecretsManager secrets.SecretsManager
-	PubSub         pubsub.PubSub
+	Name            types.ProviderName
+	RecordStore     records.RecordStore
+	PinAttemptStore records.PinAttemptStore
+	SecretsManager  secrets.SecretsManager
+	PubSub          pubsub.PubSub
 }
 
 func Parse(nameString string) (types.ProviderName, error) {
@@ -72,6 +73,19 @@ func NewProvider(ctx context.Context, name types.ProviderName, realmID types.Rea
 
 	fmt.Print("\rEstablished connection to record store.\n")
 
+	var pinAttemptStore records.PinAttemptStore
+	if name == types.Mongo {
+		fmt.Print("Connecting to pin attempt store...")
+
+		pinAttemptStore, err = records.NewPinAttemptStore(ctx, name, *options, realmID)
+		if err != nil {
+			fmt.Printf("\rFailed to connect to pin attempt store: %s.\n", err)
+			return nil, otel.RecordOutcome(err, span)
+		}
+
+		fmt.Print("\rEstablished connection to pin attempt store.\n")
+	}
+
 	fmt.Print("Connecting to pub/sub...")
 	pubsub, err := pubsub.NewPubSub(ctx, name, *options, realmID)
 	if err != nil {
@@ -81,10 +95,11 @@ func NewProvider(ctx context.Context, name types.ProviderName, realmID types.Rea
 	fmt.Print("\rEstablished connection to pub/sub system.\n\n")
 
 	return &Provider{
-		Name:           name,
-		RecordStore:    recordStore,
-		SecretsManager: secretsManager,
-		PubSub:         pubsub,
+		Name:            name,
+		RecordStore:     recordStore,
+		PinAttemptStore: pinAttemptStore,
+		SecretsManager:  secretsManager,
+		PubSub:          pubsub,
 	}, nil
 }
 

@@ -54,6 +54,21 @@ func RunRouter(
 		return c.JSON(http.StatusOK, map[string]interface{}{"realmID": realmID.String()})
 	})
 
+	jwtConfig := echojwt.Config{
+		ParseTokenFunc: func(c echo.Context, auth string) (interface{}, error) {
+			token, err := jwt.ParseWithClaims(auth, &claims{}, func(t *jwt.Token) (interface{}, error) {
+				return secrets.GetJWTSigningKey(c.Request().Context(), provider.SecretsManager, t)
+			}, jwt.WithLeeway(5*time.Second))
+			if err != nil {
+				return nil, &echojwt.TokenError{Token: token, Err: err}
+			}
+			if !token.Valid {
+				return nil, &echojwt.TokenError{Token: token, Err: errors.New("invalid token")}
+			}
+			return token, nil
+		},
+	}
+
 	e.POST("/req", func(c echo.Context) error {
 		sdkVersion, err := semver.NewVersion(c.Request().Header.Get("X-Juicebox-Version"))
 		hasValidVersion := err == nil && (sdkVersion.Major() > Version.Major() || sdkVersion.Major() == Version.Major() && sdkVersion.Minor() >= Version.Minor())
@@ -82,9 +97,65 @@ func RunRouter(
 			return contextAwareError(c, http.StatusInternalServerError, "Error reading from record store")
 		}
 
+		if provider.PinAttemptStore != nil {
+			if _, ok := request.Payload.(requests.Recover2); ok {
+				guessCount := uint16(0)
+				numGuess := uint16(0)
+				locked := false
+				switch state := userRecord.RegistrationState.(type) {
+				case records.Registered:
+					guessCount = state.GuessCount
+					numGuess = state.Policy.NumGuesses
+				case records.NoGuesses:
+					locked = true
+				}
+
+				attempt, err := provider.PinAttemptStore.Get(c.Request().Context(), claims.Subject)
+				if err != nil {
+					return contextAwareError(c, http.StatusInternalServerError, "Error reading pin attempt record")
+				}
+				if locked || shouldRateLimitAttempt(attempt, guessCount, numGuess, time.Now()) {
+					return c.NoContent(http.StatusTooManyRequests)
+				}
+			}
+		}
+
 		result, err := handleRequest(c, claims, userRecord, request, cryptoRand.Reader)
 		if err != nil {
 			return contextAwareError(c, http.StatusBadRequest, "Error processing request")
+		}
+
+		if provider.PinAttemptStore != nil {
+			now := time.Now()
+			switch request.Payload.(type) {
+			case requests.Recover2:
+				if result.response.Status == responses.Ok {
+					state, ok := result.updatedRecord.RegistrationState.(records.Registered)
+					if ok {
+						attempt, err := provider.PinAttemptStore.Get(c.Request().Context(), claims.Subject)
+						if err != nil {
+							return contextAwareError(c, http.StatusInternalServerError, "Error reading pin attempt record")
+						}
+
+						attempt = updatePinAttempt(attempt, state.GuessCount, now)
+						if err := provider.PinAttemptStore.Upsert(c.Request().Context(), claims.Subject, attempt); err != nil {
+							return contextAwareError(c, http.StatusInternalServerError, "Error updating pin attempt record")
+						}
+					}
+				}
+			case requests.Recover3:
+				if result.response.Status == responses.Ok {
+					if err := provider.PinAttemptStore.Delete(c.Request().Context(), claims.Subject); err != nil {
+						return contextAwareError(c, http.StatusInternalServerError, "Error clearing pin attempt record")
+					}
+				}
+			case requests.Register2, requests.Delete:
+				if result.response.Status == responses.Ok {
+					if err := provider.PinAttemptStore.Delete(c.Request().Context(), claims.Subject); err != nil {
+						return contextAwareError(c, http.StatusInternalServerError, "Error clearing pin attempt record")
+					}
+				}
+			}
 		}
 
 		if result.updatedRecord != nil {
@@ -114,20 +185,59 @@ func RunRouter(
 		c.Response().Header().Set(echo.HeaderContentType, echo.MIMEOctetStream)
 		return c.Blob(http.StatusOK, echo.MIMEOctetStream, serializedResponse)
 
-	}, middleware.BodyLimit("2K"), echojwt.WithConfig(echojwt.Config{
-		ParseTokenFunc: func(c echo.Context, auth string) (interface{}, error) {
-			token, err := jwt.ParseWithClaims(auth, &claims{}, func(t *jwt.Token) (interface{}, error) {
-				return secrets.GetJWTSigningKey(c.Request().Context(), provider.SecretsManager, t)
-			}, jwt.WithLeeway(5*time.Second))
+	}, middleware.BodyLimit("2K"), echojwt.WithConfig(jwtConfig))
+
+	e.GET("/limit", func(c echo.Context) error {
+		userRecordID, claims, err := userRecordID(c, realmID)
+		if err != nil {
+			return contextAwareError(c, http.StatusUnauthorized, "Error reading user from jwt")
+		}
+
+		userRecord, _, err := provider.RecordStore.GetRecord(c.Request().Context(), *userRecordID)
+		if err != nil {
+			return contextAwareError(c, http.StatusInternalServerError, "Error reading from record store")
+		}
+
+		numGuess := uint16(0)
+		guessCount := 0
+		locked := false
+		switch state := userRecord.RegistrationState.(type) {
+		case records.Registered:
+			numGuess = state.Policy.NumGuesses
+			guessCount = int(state.GuessCount)
+			if numGuess > 0 && state.GuessCount >= numGuess {
+				locked = true
+			}
+		case records.NoGuesses:
+			locked = true
+		}
+
+		retryAfter := int64(0)
+		if provider.PinAttemptStore != nil {
+			attempt, err := provider.PinAttemptStore.Get(c.Request().Context(), claims.Subject)
 			if err != nil {
-				return nil, &echojwt.TokenError{Token: token, Err: err}
+				return contextAwareError(c, http.StatusInternalServerError, "Error reading pin attempt record")
 			}
-			if !token.Valid {
-				return nil, &echojwt.TokenError{Token: token, Err: errors.New("invalid token")}
+			if !attempt.RetryAt.IsZero() || locked {
+				if locked {
+					retryAfter = -1
+				} else if !attempt.RetryAt.IsZero() {
+					if now := time.Now(); now.Before(attempt.RetryAt) {
+						retryAfter = int64(attempt.RetryAt.Sub(now).Seconds())
+						if retryAfter < 0 {
+							retryAfter = 0
+						}
+					}
+				}
 			}
-			return token, nil
-		},
-	}))
+		}
+
+		return c.JSON(http.StatusOK, responses.Limit{
+			NumGuess:   numGuess,
+			GuessCount: guessCount,
+			RetryAfter: retryAfter,
+		})
+	}, echojwt.WithConfig(jwtConfig))
 
 	AddTenantLogHandlers(e, realmID, provider.PubSub, provider.SecretsManager, types.JuiceboxTenantSecretPrefix)
 
