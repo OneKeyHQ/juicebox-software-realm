@@ -50,6 +50,41 @@ func RunRouter(
 	e.Use(middleware.CORS())
 	e.Use(otelecho.Middleware("echo-router"))
 
+	e.HTTPErrorHandler = func(err error, c echo.Context) {
+		if err == nil {
+			return
+		}
+
+		code := http.StatusInternalServerError
+		msg := http.StatusText(code)
+
+		if he, ok := err.(*echo.HTTPError); ok {
+			if he.Code != 0 {
+				code = he.Code
+			}
+			switch v := he.Message.(type) {
+			case string:
+				if v != "" {
+					msg = v
+				}
+			case error:
+				if v.Error() != "" {
+					msg = v.Error()
+				}
+			default:
+				if he.Message != nil {
+					msg = fmt.Sprintf("%v", he.Message)
+				}
+			}
+		}
+
+		c.Logger().Errorf("http error: %v", err)
+		if c.Response().Committed {
+			return
+		}
+		_ = c.String(code, msg)
+	}
+
 	e.GET("/", func(c echo.Context) error {
 		return c.JSON(http.StatusOK, map[string]interface{}{"realmID": realmID.String()})
 	})
@@ -83,7 +118,7 @@ func RunRouter(
 
 		body, err := io.ReadAll(c.Request().Body)
 		if err != nil {
-			return contextAwareError(c, http.StatusInternalServerError, "Error reading request body")
+			return logInternalError(c, err, "Error reading request body")
 		}
 
 		var request requests.SecretsRequest
@@ -94,7 +129,7 @@ func RunRouter(
 
 		userRecord, readRecord, err := provider.RecordStore.GetRecord(c.Request().Context(), *userRecordID)
 		if err != nil {
-			return contextAwareError(c, http.StatusInternalServerError, "Error reading from record store")
+			return logInternalError(c, err, "Error reading from record store")
 		}
 
 		if provider.PinAttemptStore != nil {
@@ -112,7 +147,7 @@ func RunRouter(
 
 				attempt, err := provider.PinAttemptStore.Get(c.Request().Context(), claims.Subject)
 				if err != nil {
-					return contextAwareError(c, http.StatusInternalServerError, "Error reading pin attempt record")
+					return logInternalError(c, err, "Error reading pin attempt record")
 				}
 				if locked || shouldRateLimitAttempt(attempt, guessCount, numGuess, time.Now()) {
 					return c.NoContent(http.StatusTooManyRequests)
@@ -134,25 +169,25 @@ func RunRouter(
 					if ok {
 						attempt, err := provider.PinAttemptStore.Get(c.Request().Context(), claims.Subject)
 						if err != nil {
-							return contextAwareError(c, http.StatusInternalServerError, "Error reading pin attempt record")
+							return logInternalError(c, err, "Error reading pin attempt record")
 						}
 
 						attempt = updatePinAttempt(attempt, state.GuessCount, now)
 						if err := provider.PinAttemptStore.Upsert(c.Request().Context(), claims.Subject, attempt); err != nil {
-							return contextAwareError(c, http.StatusInternalServerError, "Error updating pin attempt record")
+							return logInternalError(c, err, "Error updating pin attempt record")
 						}
 					}
 				}
 			case requests.Recover3:
 				if result.response.Status == responses.Ok {
 					if err := provider.PinAttemptStore.Delete(c.Request().Context(), claims.Subject); err != nil {
-						return contextAwareError(c, http.StatusInternalServerError, "Error clearing pin attempt record")
+						return logInternalError(c, err, "Error clearing pin attempt record")
 					}
 				}
 			case requests.Register2, requests.Delete:
 				if result.response.Status == responses.Ok {
 					if err := provider.PinAttemptStore.Delete(c.Request().Context(), claims.Subject); err != nil {
-						return contextAwareError(c, http.StatusInternalServerError, "Error clearing pin attempt record")
+						return logInternalError(c, err, "Error clearing pin attempt record")
 					}
 				}
 			}
@@ -161,18 +196,18 @@ func RunRouter(
 		if result.updatedRecord != nil {
 			err := provider.RecordStore.WriteRecord(c.Request().Context(), *userRecordID, *result.updatedRecord, readRecord)
 			if err != nil {
-				return contextAwareError(c, http.StatusInternalServerError, "Error writing to record store")
+				return logInternalError(c, err, "Error writing to record store")
 			}
 		}
 		if result.event != nil {
 			err := provider.PubSub.Publish(c.Request().Context(), realmID, claims.Issuer, *result.event)
 			if err != nil {
-				return contextAwareError(c, http.StatusInternalServerError, "Error writing to pub/sub queue")
+				return logInternalError(c, err, "Error writing to pub/sub queue")
 			}
 		}
 		serializedResponse, err := cbor.Marshal(&result.response)
 		if err != nil {
-			return contextAwareError(c, http.StatusInternalServerError, "Error marshalling response payload")
+			return logInternalError(c, err, "Error marshalling response payload")
 		}
 
 		otel.IncrementInt64Counter(
@@ -195,7 +230,7 @@ func RunRouter(
 
 		userRecord, _, err := provider.RecordStore.GetRecord(c.Request().Context(), *userRecordID)
 		if err != nil {
-			return contextAwareError(c, http.StatusInternalServerError, "Error reading from record store")
+			return logInternalError(c, err, "Error reading from record store")
 		}
 
 		numGuess := uint16(0)
@@ -216,7 +251,7 @@ func RunRouter(
 		if provider.PinAttemptStore != nil {
 			attempt, err := provider.PinAttemptStore.Get(c.Request().Context(), claims.Subject)
 			if err != nil {
-				return contextAwareError(c, http.StatusInternalServerError, "Error reading pin attempt record")
+				return logInternalError(c, err, "Error reading pin attempt record")
 			}
 			if !attempt.RetryAt.IsZero() || locked {
 				if locked {
@@ -483,6 +518,15 @@ func contextAwareError(c echo.Context, code int, str string) error {
 	default:
 		return c.String(code, str)
 	}
+}
+
+func logInternalError(c echo.Context, err error, msg string) error {
+	if err != nil {
+		c.Logger().Errorf("%s: %v", msg, err)
+	} else {
+		c.Logger().Error(msg)
+	}
+	return contextAwareError(c, http.StatusInternalServerError, msg)
 }
 
 func timingHeader(next echo.HandlerFunc) echo.HandlerFunc {
