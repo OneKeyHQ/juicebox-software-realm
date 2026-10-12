@@ -73,6 +73,14 @@ func NewProvider(ctx context.Context, name types.ProviderName, realmID types.Rea
 
 	fmt.Print("\rEstablished connection to record store.\n")
 
+	if historyStore, err := records.NewRecordHistoryStore(ctx, name, *options, realmID); err != nil {
+		// Backups are best effort, so the realm still starts without them.
+		fmt.Printf("Failed to set up record history, continuing without it: %s.\n", err)
+	} else if historyStore != nil {
+		recordStore = records.NewHistoryRecordStore(recordStore, historyStore, realmID)
+		fmt.Print("Record history enabled.\n")
+	}
+
 	var pinAttemptStore records.PinAttemptStore
 	if name == types.Mongo {
 		fmt.Print("Connecting to pin attempt store...")
